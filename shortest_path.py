@@ -36,7 +36,7 @@ import networkx as nx
 
 
 
-class ProjectController(app_manager.RyuApp):
+lass ProjectController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
@@ -44,15 +44,17 @@ class ProjectController(app_manager.RyuApp):
         self.mac_to_port = {}
 
         self.topology_api_app = self
-        self.net = nx.DiGraph()
+        self.net = nx.DiGraph() #restore network topo
         self.nodes = {}
         self.links = {}
         self.no_of_nodes = 0
         self.no_of_links = 0
         self.i = 0
         self.anycast_ip = '10.10.10.10'
-
-        # anycast controller dict:
+        #restore the info of hosts connected to anycast controller
+        self.controller1 = []
+        self.controller2 = []
+        # anycast controller dict: hw_addr  ,    ip,      
         self.hw = {'h3':['00:00:00:00:00:03', '10.0.0.3'],
                    'h4':['00:00:00:00:00:04', '10.0.0.4'],
                    }
@@ -157,20 +159,51 @@ class ProjectController(app_manager.RyuApp):
         path_h4 = nx.shortest_path(self.net, dpid, 4)
         pkt = packet.Packet()
         # choose a controller between h3 and h4
-        if len(path_h3) > len(path_h4):
+        # choose controller2 (h4)
+        if len(path_h3) >= len(path_h4):
             pkt.add_protocol(
                 ethernet.ethernet(ethertype=pkt_ethernet.ethertype, dst=pkt_ethernet.src, src=self.hw['h4'][0]))
             pkt.add_protocol(
                 arp.arp(opcode=arp.ARP_REPLY, src_mac=self.hw['h4'][0], src_ip=pkt_arp.dst_ip, dst_mac=pkt_arp.src_mac,
                         dst_ip=pkt_arp.src_ip))
-        else:
+            if pkt_ethernet.src not in self.controller2:
+                # add info
+                self.controller2.append(pkt_ethernet.src)
+        # choose controller1 (h3)
+        elif len(path_h3) < len(path_h4):
             pkt.add_protocol(
                 ethernet.ethernet(ethertype=pkt_ethernet.ethertype, dst=pkt_ethernet.src, src=self.hw['h3'][0]))
             pkt.add_protocol(
                 arp.arp(opcode=arp.ARP_REPLY, src_mac=self.hw['h3'][0], src_ip=pkt_arp.dst_ip, dst_mac=pkt_arp.src_mac,
                         dst_ip=pkt_arp.src_ip))
+            if pkt_ethernet.src not in self.controller1:
+                # add info
+                self.controller1.append(pkt_ethernet.src)
+        # when the length of path equals, consider the num of hosts connected
+        '''elif len(path_h3) == len(path_h4):
+            if len(self.controller1) < len(self.controller2):
+                pkt.add_protocol(
+                    ethernet.ethernet(ethertype=pkt_ethernet.ethertype, dst=pkt_ethernet.src, src=self.hw['h3'][0]))
+                pkt.add_protocol(
+                    arp.arp(opcode=arp.ARP_REPLY, src_mac=self.hw['h3'][0], src_ip=pkt_arp.dst_ip,
+                            dst_mac=pkt_arp.src_mac,
+                            dst_ip=pkt_arp.src_ip))
+                if dpid not in self.controller1:
+                    # add info
+                    self.controller1.append(dpid)
 
-        self.logger.info("Receive ARP_REQUEST,request IP is %s", pkt_arp.dst_ip)
+            else:
+                pkt.add_protocol(
+                    ethernet.ethernet(ethertype=pkt_ethernet.ethertype, dst=pkt_ethernet.src, src=self.hw['h4'][0]))
+                pkt.add_protocol(
+                    arp.arp(opcode=arp.ARP_REPLY, src_mac=self.hw['h4'][0], src_ip=pkt_arp.dst_ip,
+                            dst_mac=pkt_arp.src_mac,
+                            dst_ip=pkt_arp.src_ip))
+                if pkt_ethernet.src not in self.controller2:
+                    # add info
+                    self.controller2.append(pkt_ethernet.src)'''
+
+        self.logger.info("Receive ARP_REQUEST,request src IP is %s, ", pkt_arp.src_ip )
         self._send_packet(datapath, port, pkt)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
@@ -196,6 +229,7 @@ class ProjectController(app_manager.RyuApp):
 
         # handle anycast arp specificly
         if pkt_arp:
+
             if pkt_arp.dst_ip == self.anycast_ip:
                 # do something to anycast
                 self._handle_arp(datapath, in_port, eth, pkt_arp)
@@ -252,6 +286,21 @@ class ProjectController(app_manager.RyuApp):
 
 
                     # ingress
+                if pkt_ipv4.dst == self.anycast_ip and dpid ==4:
+                    self.logger.info("its anycast packet!")
+                    match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=self.anycast_ip)
+                    if eth.dst == self.hw['h3'][0]:
+                        set_field = parser.OFPActionSetField(ipv4_dst=self.hw['h3'][1])
+                    elif eth.dst == self.hw['h4'][0]:
+                        set_field = parser.OFPActionSetField(ipv4_dst=self.hw['h4'][1])
+                    actions = [set_field, parser.OFPActionOutput(out_port)]
+                    self.add_flow(datapath, 100, match, actions, )
+                    self.logger.info(" s4 set flow!")
+                    return
+
+
+
+                    # ingress
                 # the second SYN,ACK
                 if pkt_ipv4.src == self.hw['h3'][1] and dpid ==3:
                     match = parser.OFPMatch(eth_type=0x0800, ipv4_src=self.hw['h3'][1])
@@ -265,12 +314,12 @@ class ProjectController(app_manager.RyuApp):
                     set_field = parser.OFPActionSetField(ipv4_src=self.anycast_ip)
                     actions = [set_field, parser.OFPActionOutput(out_port)]
                     self.add_flow(datapath, 100, match, actions, )
-                    self.logger.info(" s3 set flow!")
+                    self.logger.info(" s4 set flow!")
                     return
                     # install a flow to avoid packet_in next time
                 # at s2 must set flow to pass pkt to the right port
                 if pkt_ipv4.src == self.anycast_ip and dpid == 2:
-                    match = parser.OFPMatch(eth_type=0x0800, ipv4_src=self.anycast_ip, ipv4_dst=pkt_ipv4.dst)
+                    match = parser.OFPMatch(eth_type=0x0800, ipv4_src=self.anycast_ip, )
                     actions = [parser.OFPActionOutput(out_port)]
                     self.add_flow(datapath, 100, match, actions, )
                     self.logger.info(" s2 set flow!")
