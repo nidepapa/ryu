@@ -3,10 +3,16 @@ apps used in the sdn based on ryu
 本次试验的的内容是使用ryu调度控制器来进行anycast的链接，也就是为任意一台网络中的交换机选择最好的控制器。
 
 STEP1
-调整好实验环境 RYU+Mininet，环境搭建的方法网上有很多，这里不再赘述。
+用python运行mynet文件搭建好RYU+Mininet的网络结构，包含以下组件：
+c0 调度控制器的主控制器master (唯一的不同网段)
+c1，c2收c0的调度的slave
+s1~s5, 交换机直接与c1或c2相连
+h1~h6与交换机相连。
 
 STEP2
 环境搭建好后，就要首先确定网络拓扑。本次实验的拓扑图如下
+
+
 
 
 
@@ -63,12 +69,6 @@ p.MsoNormal, li.MsoNormal, div.MsoNormal
 div.WordSection1
 	{page:WordSection1;}
 -->
-
-
-
-
-
-
 
 
 
